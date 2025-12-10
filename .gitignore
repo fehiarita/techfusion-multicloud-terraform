@@ -1,0 +1,25 @@
+# Terraform state and caches
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+.terraform.tfstate.backup
+
+# Local variables and secrets
+*.tfvars
+!**/terraform.tfvars
+*.tfvars.json
+*.env
+
+# Plans
+*.plan
+*.tfplan
+
+# Editors/OS
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/
+*.code-workspace

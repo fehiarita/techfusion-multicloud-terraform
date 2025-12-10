@@ -1,0 +1,96 @@
+trigger:
+  - main
+
+pool:
+  name: Default
+
+variables:
+  - group: variables
+  - name: TF_ROOT
+    value: "environments/dev"
+
+stages:
+  - stage: CI
+    displayName: "Continuous Integration"
+    jobs:
+      - job: Validate
+        displayName: "Validate Configuration"
+        steps:
+          - powershell: |
+              terraform fmt -check -recursive
+            displayName: "Check Formatting"
+            workingDirectory: $(TF_ROOT)
+            continueOnError: true
+
+          - powershell: |
+              terraform init -backend=false
+              terraform validate
+            displayName: "Validate Syntax"
+            workingDirectory: $(TF_ROOT)
+            env:
+              AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+              AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+              AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
+
+  - stage: Plan
+    displayName: "Plan Changes"
+    dependsOn: CI
+    jobs:
+      - job: Plan
+        displayName: "Terraform Plan"
+        steps:
+          - powershell: |
+              az login --service-principal -u $env:azure_client_id -p $env:azure_client_secret --tenant $env:azure_tenant_id
+              terraform init
+              terraform plan -out=tfplan -input=false `
+                -var="azure_subscription_id=$env:azure_subscription_id" `
+                -var="azure_tenant_id=$env:azure_tenant_id" `
+                -var="azure_client_id=$env:azure_client_id" `
+                -var="azure_client_secret=$env:azure_client_secret" `
+                -var="db_password=$env:db_password" `
+                -var="azure_db_password=$env:azure_db_password"
+            displayName: "Create Plan"
+            workingDirectory: $(TF_ROOT)
+            env:
+              AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+              AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+              AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
+              azure_client_id: $(azure_client_id)
+              azure_client_secret: $(azure_client_secret)
+              azure_tenant_id: $(azure_tenant_id)
+              azure_subscription_id: $(azure_subscription_id)
+              db_password: $(db_password)
+              azure_db_password: $(azure_db_password)
+
+          - publish: $(TF_ROOT)/tfplan
+            artifact: tfplan
+            displayName: "Publish Plan"
+
+  - stage: Deploy
+    displayName: "Deploy to Production"
+    dependsOn: Plan
+    condition: and(succeeded(), in(variables['Build.SourceBranch'], 'refs/heads/main', 'refs/heads/master'))
+    jobs:
+      - job: Apply
+        displayName: "Terraform Apply"
+        steps:
+          - download: current
+            artifact: tfplan
+
+          - powershell: |
+              az login --service-principal -u $env:azure_client_id -p $env:azure_client_secret --tenant $env:azure_tenant_id
+
+              # Move plan file to working directory
+              Copy-Item -Path "$(Pipeline.Workspace)/tfplan/tfplan" -Destination .
+
+              terraform init
+              terraform apply -input=false tfplan
+            displayName: "Apply Plan"
+            workingDirectory: $(TF_ROOT)
+            env:
+              AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+              AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+              AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
+              azure_client_id: $(azure_client_id)
+              azure_client_secret: $(azure_client_secret)
+              azure_tenant_id: $(azure_tenant_id)
